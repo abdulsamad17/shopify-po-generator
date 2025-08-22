@@ -38,9 +38,6 @@ build/
 *.rar
 *.7z
 
-# Screenshots 
-screenshots/
-
 # Local environment files
 .env
 .env.local

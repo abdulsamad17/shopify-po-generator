@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shopify PO Generator</title>
+  <link rel="stylesheet" href="styles/popup.css" />
+  <script src="popup.js" defer></script>
+  <script src="Libraries/exceljs.min.js"></script>
+</head>
+
+<body>
+  <div class="container">
+    <h1>Shopify PO Generator</h1>
+    <div id="message" class="message">Fetching PO Number and Date...</div>
+
+    <!-- Loader (initially hidden) -->
+    <div id="loader" class="loader" style="display: none;"></div>
+
+    <!-- Table container (initially hidden) -->
+    <div id="preview-table-container" style="display: none;">
+      <table id="preview-table">
+        <thead>
+          <tr>
+            <th>SR #</th>
+            <th>Image</th>
+            <th>Title</th>
+            <th>Quantity</th>
+            <th>Unit Price</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <!-- Download Button -->
+    <button id="download" class="btn" disabled>Download Excel</button>
+  </div>
+</body>
+
+</html>
