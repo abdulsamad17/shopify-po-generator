@@ -88,34 +88,65 @@ document.addEventListener("DOMContentLoaded", async () => {
 function extractPoInfo() {
   // Function to extract the PO number from the Shopify page
   const getPurchaseOrderNumber = () => {
+    // Try the new selector first (h1 inside page title div)
     const poNumberElement = document.querySelector(
-      "span.Polaris-Text--headingLg.Polaris-Text--bold"
+      "#page-title h1, .Polaris-Breadcrumbs__PageTitle h1"
     );
+    
     if (poNumberElement) {
       const poText = poNumberElement.textContent.trim();
       const poNumberMatch = poText.match(/#PO\d+/); // Regex to match "#PO" followed by numbers
-      return poNumberMatch ? poNumberMatch[0] : "PO_Unknown";
-    } else {
-      return "PO_Unknown";
+      return poNumberMatch ? poNumberMatch[0] : poText;
+    } 
+    
+    // Fallback to older selector just in case
+    const oldPoElement = document.querySelector(
+      "span.Polaris-Text--headingLg.Polaris-Text--bold"
+    );
+    if (oldPoElement) {
+       const poText = oldPoElement.textContent.trim();
+       const poNumberMatch = poText.match(/#PO\d+/);
+       return poNumberMatch ? poNumberMatch[0] : "PO_Unknown";
     }
+
+    return "PO_Unknown";
   };
 
   const getPurchaseOrderDate = () => {
-    // Locate the label containing "Estimated arrival"
-    const poDateLabelElement = [...document.querySelectorAll("label")].find(
-      (el) => el.textContent.trim() === "Estimated arrival"
-    );
+    // Search strategy: Look for elements with text "Estimated arrival"
+    // This covers both <label> (Draft) and <s-internal-text> (Closed)
+    
+    // Helper to traverse and find the text
+    const xpath = "//*[contains(text(), 'Estimated arrival')]";
+    const result = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+    
+    for (let i = 0; i < result.snapshotLength; i++) {
+        const el = result.snapshotItem(i);
+        
+        // Skip if it's a script or style
+        if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE') continue;
 
-    // If the label is found, locate the associated input element containing the date
-    if (poDateLabelElement) {
-      const poDateInputElement =
-        poDateLabelElement.parentElement.parentElement.nextElementSibling.querySelector(
-          "input"
-        );
+        // CHECK 1: Closed PO style (Text inside a container, value in sibling p)
+        // Structure: div.Polaris-TextContainer > s-internal-text + p
+        const container = el.closest(".Polaris-TextContainer");
+        if (container) {
+            const p = container.querySelector("p");
+            if (p && p.innerText) return p.innerText.trim();
+        }
 
-      if (poDateInputElement && poDateInputElement.value) {
-        return poDateInputElement.value.trim(); // Return the value from the input element
-      }
+        // CHECK 2: Draft PO style (Label > (traverse) > Input)
+        if (el.tagName === 'LABEL') {
+             let wrapper = el.closest(".Polaris-Labelled__LabelWrapper");
+              if (wrapper && wrapper.nextElementSibling) {
+                const input = wrapper.nextElementSibling.querySelector("input");
+                if (input && input.value) return input.value.trim();
+              }
+              // Fallback for older drafts
+              if (el.parentElement && el.parentElement.parentElement && el.parentElement.parentElement.nextElementSibling) {
+                  const input = el.parentElement.parentElement.nextElementSibling.querySelector("input");
+                  if (input && input.value) return input.value.trim();
+              }
+        }
     }
 
     return "Date Unknown"; // Default return value if no date is found
@@ -134,21 +165,64 @@ function getFilteredHtmlContent() {
   let rowCounter = 1; // Start the row counter from 1
 
   rows.forEach((row) => {
-    if (row.className && row.className.startsWith("_PurchaseOrderLineItem_")) {
-      let thumbnail = row.querySelector("img")?.src || "N/A";
-      let title =
-        row.querySelector("td._ItemDetails_zai7p_8 a.Polaris-Link")
-          ?.innerText || "N/A";
+    // Check if row class starts with _PurchaseOrderLineItem_ or contains it
+    if (row.className && typeof row.className === 'string' && row.className.includes("_PurchaseOrderLineItem_")) {
+      // Image: Check s-thumbnail src first, then fallback to img src
+      let thumbnail = "N/A";
+      const sThumbnail = row.querySelector("s-thumbnail");
+      if (sThumbnail && sThumbnail.getAttribute("src")) {
+          thumbnail = sThumbnail.getAttribute("src");
+      } else {
+          thumbnail = row.querySelector("img")?.src || "N/A";
+      }
 
-      // Extract and clean up quantity
-      let quantity =
-        row.querySelector("td._Received_zai7p_115 input")?.value || "0";
-      quantity = parseInt(quantity, 10); // Ensure it's a number
+      // Title: Look for cell with class containing _ItemDetails_
+      let title = "N/A";
+      const titleCell = row.querySelector("td[class*='_ItemDetails_']");
+      if (titleCell) {
+          title = titleCell.querySelector("a.Polaris-Link")?.innerText || titleCell.innerText || "N/A";
+      }
 
-      // Extract and clean up unit price
-      let unitPrice =
-        row.querySelector("td._Cost_zai7p_21 input")?.value || "0";
-      unitPrice = parseFloat(unitPrice.replace(/[^\d.-]/g, "")); // Remove currency symbols and parse as float
+      // Quantity: Look for cell with class containing _Received_
+      // Draft PO: <input value="...">
+      // Closed PO: Text "10 of 10" (Received of Ordered)
+      let quantity = "0";
+      const qtyCell = row.querySelector("td[class*='_Received_']");
+      if (qtyCell) {
+          const input = qtyCell.querySelector("input");
+          if (input) {
+              quantity = input.value;
+          } else {
+              // Extract text, potentially "X of Y"
+              const text = qtyCell.innerText || "";
+              const ofMatch = text.match(/(\d+)\s+of\s+(\d+)/);
+              if (ofMatch) {
+                  // If "X of Y" format, assume Y is the ordered quantity
+                  quantity = ofMatch[2]; 
+              } else {
+                  // Fallback to simple parse
+                  quantity = text;
+              }
+          }
+      }
+      quantity = parseInt(quantity, 10); 
+      if (isNaN(quantity)) quantity = 0;
+
+      // Unit Price: Look for cell with class containing _Cost_
+      // Draft PO: <input value="...">
+      // Closed PO: Text "Rs 400.00"
+      let unitPrice = "0";
+      const costCell = row.querySelector("td[class*='_Cost_']");
+      if (costCell) {
+          const input = costCell.querySelector("input");
+          if (input) {
+              unitPrice = input.value;
+          } else {
+              unitPrice = costCell.innerText || "0";
+          }
+      }
+      unitPrice = parseFloat(unitPrice.replace(/[^\d.-]/g, "")); 
+      if (isNaN(unitPrice)) unitPrice = 0.00;
 
       // Calculate total price (unit price * quantity)
       let total = (quantity * unitPrice).toFixed(2); // Ensure two decimal places
